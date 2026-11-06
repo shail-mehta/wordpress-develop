@@ -154,4 +154,68 @@ test.describe( 'User management', () => {
 			users[ 2 ].id,
 		] );
 	} );
+
+	test( 'changes another user role from the edit screen', async ( {
+		admin,
+		page,
+		requestUtils,
+	} ) => {
+		const username = `${ prefix }-role`;
+		usernames.push( username );
+		const user = await requestUtils.createUser( {
+			username,
+			email: `${ username }@example.org`,
+			password: randomUUID(),
+			roles: [ 'subscriber' ],
+		} );
+
+		await admin.visitAdminPage( '/user-edit.php', `user_id=${ user.id }` );
+		await expect( page.locator( '#role' ) ).toHaveValue( 'subscriber' );
+		await page.locator( '#role' ).selectOption( 'editor' );
+		await page
+			.getByRole( 'button', { name: 'Update User', exact: true } )
+			.click();
+		await expect( page.locator( '#message' ) ).toContainText(
+			'User updated.'
+		);
+		await expect( page.locator( '#role' ) ).toHaveValue( 'editor' );
+
+		const updated = await requestUtils.rest( {
+			path: `/wp/v2/users/${ user.id }`,
+			params: { context: 'edit' },
+		} );
+		expect( updated.roles ).toEqual( [ 'editor' ] );
+	} );
+
+	test( 'prevents an administrator from changing their own role to subscriber', async ( {
+		admin,
+		page,
+		requestUtils,
+	} ) => {
+		const currentUser = await requestUtils.rest( {
+			path: '/wp/v2/users/me',
+			params: { context: 'edit' },
+		} );
+		expect( currentUser.roles ).toContain( 'administrator' );
+
+		await admin.visitAdminPage( '/profile.php' );
+		await expect( page.locator( '#role' ) ).toHaveCount( 0 );
+
+		await admin.visitAdminPage( '/users.php' );
+		await page
+			.locator( `#user-${ currentUser.id }` )
+			.getByRole( 'checkbox' )
+			.check();
+		await page.locator( '#new_role' ).selectOption( 'subscriber' );
+		await page.locator( '#changeit' ).click();
+		await expect( page.locator( '#message.error' ) ).toContainText(
+			'You cannot change your own role to one that does not allow managing other users. Your role was not changed.'
+		);
+
+		const stillAdmin = await requestUtils.rest( {
+			path: '/wp/v2/users/me',
+			params: { context: 'edit' },
+		} );
+		expect( stillAdmin.roles ).toContain( 'administrator' );
+	} );
 } );
